@@ -44,9 +44,9 @@ export default function ApplicationsPanel({ applications, onPreview, onEdit, onA
   if (!applications.length) {
     return (
       <div className="applications-empty">
-        Every report you save is stored here (in this browser&rsquo;s local storage), so you
-        can revisit or re-print a previous applicant&rsquo;s PDF at any time. Removing one
-        moves it to the Archive rather than deleting it.
+        Every report you save is stored here (in Supabase), so you can revisit or re-print a
+        previous applicant&rsquo;s PDF at any time, from any device. Removing one moves it to
+        the Archive rather than deleting it.
       </div>
     )
   }

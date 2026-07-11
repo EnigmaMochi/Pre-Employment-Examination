@@ -21,9 +21,7 @@ import {
 } from './data/checklist.js'
 import { generateNextHospitalNumber } from './utils/generateHospitalNumber.js'
 import {
-  getApplications,
-  getArchivedApplications,
-  getAllApplicationsIncludingArchived,
+  fetchAllApplications,
   saveApplication,
   updateApplication,
   archiveApplication,
@@ -89,16 +87,18 @@ function createDefaultExaminer() {
   return { name: '', licenseNo: '' }
 }
 
-function existingHospitalNumbers() {
-  return getAllApplicationsIncludingArchived()
-    .map((app) => app.hospitalNumber)
-    .filter(Boolean)
+// Pulls the list of hospital numbers already in use (active + archived) out
+// of whatever application list is currently in state, so a newly generated
+// number never collides with one already saved in Supabase.
+function existingHospitalNumbers(list) {
+  return list.map((app) => app.hospitalNumber).filter(Boolean)
 }
 
 function App() {
-  const [hospitalNumber, setHospitalNumber] = useState(() =>
-    generateNextHospitalNumber(existingHospitalNumbers())
-  )
+  // Hospital number can't be computed until the saved applications have
+  // been fetched from Supabase (we need to know which numbers are already
+  // in use), so it starts blank and is filled in once loading finishes.
+  const [hospitalNumber, setHospitalNumber] = useState('')
   const [photo, setPhoto] = useState(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
 
@@ -193,13 +193,55 @@ function App() {
   // of the time.
   const [saveNotice, setSaveNotice] = useState(null)
 
-  const [applications, setApplications] = useState(() => getApplications())
-  const [archivedApplications, setArchivedApplications] = useState(() => getArchivedApplications())
+  // Master list of every application (active + archived) as fetched from
+  // Supabase. The active/archived lists shown in the UI are just filtered
+  // views of this one array, so we don't have to keep multiple copies in
+  // sync by hand.
+  const [allApplications, setAllApplications] = useState([])
+  const [applicationsLoading, setApplicationsLoading] = useState(true)
+  const [applicationsError, setApplicationsError] = useState(null)
+  const [isSaving, setIsSaving] = useState(false)
   const [pdfPreviewData, setPdfPreviewData] = useState(null)
 
+  const applications = useMemo(
+    () => allApplications.filter((app) => !app.archived),
+    [allApplications]
+  )
+  const archivedApplications = useMemo(
+    () => allApplications.filter((app) => app.archived),
+    [allApplications]
+  )
+
+  // Load every saved application from Supabase once on mount, then work out
+  // the first available hospital number now that we know what's in use.
   useEffect(() => {
-    setApplications(getApplications())
-    setArchivedApplications(getArchivedApplications())
+    let cancelled = false
+
+    async function load() {
+      setApplicationsLoading(true)
+      setApplicationsError(null)
+      try {
+        const list = await fetchAllApplications()
+        if (cancelled) return
+        setAllApplications(list)
+        setHospitalNumber(generateNextHospitalNumber(existingHospitalNumbers(list)))
+      } catch (err) {
+        if (cancelled) return
+        console.error(err)
+        setApplicationsError(
+          err.message || 'Could not load saved applications from Supabase.'
+        )
+        // Still let the form work even if Supabase is unreachable.
+        setHospitalNumber(generateNextHospitalNumber([]))
+      } finally {
+        if (!cancelled) setApplicationsLoading(false)
+      }
+    }
+
+    load()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const fullName = useMemo(() => {
@@ -239,7 +281,9 @@ function App() {
   // save so the next applicant can be started without manually clearing
   // out the previous applicant's inputs first.
   const resetForm = ({ nextHospitalNumber } = {}) => {
-    setHospitalNumber(nextHospitalNumber ?? generateNextHospitalNumber(existingHospitalNumbers()))
+    setHospitalNumber(
+      nextHospitalNumber ?? generateNextHospitalNumber(existingHospitalNumbers(allApplications))
+    )
     setPhoto(null)
     setPersonal(createDefaultPersonal())
     setVitals(createDefaultVitals())
@@ -259,28 +303,43 @@ function App() {
     setEditingId(null)
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
+    if (isSaving) return
+    setIsSaving(true)
+    setApplicationsError(null)
 
-    if (editingId) {
-      // Editing an existing application: overwrite it in place and keep
-      // its original hospital number rather than generating a new one.
-      const updatedList = updateApplication(editingId, { ...buildSnapshot(), hospitalNumber })
-      setApplications(updatedList)
-      setSaveNotice({ mode: 'updated', hospitalNumber, dispositionCategory })
-      resetForm()
-    } else {
-      // Assign the next sequential hospital number (001, 002, 003, ...) with
-      // today's real date, guaranteed not to clash with any number already
-      // used by a previously saved application.
-      const currentHospitalNumber = generateNextHospitalNumber(existingHospitalNumbers())
-      const saved = saveApplication({ ...buildSnapshot(), hospitalNumber: currentHospitalNumber })
-      setApplications((list) => [saved, ...list])
-      setSaveNotice({ mode: 'created', hospitalNumber: currentHospitalNumber, dispositionCategory })
-      resetForm()
+    try {
+      if (editingId) {
+        // Editing an existing application: overwrite it in place and keep
+        // its original hospital number rather than generating a new one.
+        const updated = await updateApplication(editingId, { ...buildSnapshot(), hospitalNumber })
+        setAllApplications((list) => list.map((app) => (app.id === editingId ? updated : app)))
+        setSaveNotice({ mode: 'updated', hospitalNumber, dispositionCategory })
+        resetForm()
+      } else {
+        // Assign the next sequential hospital number (001, 002, 003, ...) with
+        // today's real date, guaranteed not to clash with any number already
+        // used by a previously saved application.
+        const currentHospitalNumber = generateNextHospitalNumber(
+          existingHospitalNumbers(allApplications)
+        )
+        const saved = await saveApplication({
+          ...buildSnapshot(),
+          hospitalNumber: currentHospitalNumber,
+        })
+        setAllApplications((list) => [saved, ...list])
+        setSaveNotice({ mode: 'created', hospitalNumber: currentHospitalNumber, dispositionCategory })
+        resetForm()
+      }
+
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (err) {
+      console.error(err)
+      setApplicationsError(err.message || 'Could not save this report to Supabase.')
+    } finally {
+      setIsSaving(false)
     }
-
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   // Loads a saved application's data back into the form so it can be
@@ -317,19 +376,35 @@ function App() {
 
   // Removing an application from the active list no longer deletes it —
   // it moves to the Archive workspace instead.
-  const handleArchiveApplication = (id) => {
-    setApplications(archiveApplication(id))
-    setArchivedApplications(getArchivedApplications())
+  const handleArchiveApplication = async (id) => {
+    try {
+      const updated = await archiveApplication(id)
+      setAllApplications((list) => list.map((app) => (app.id === id ? updated : app)))
+    } catch (err) {
+      console.error(err)
+      setApplicationsError(err.message || 'Could not archive this application.')
+    }
   }
 
-  const handleRestoreApplication = (id) => {
-    setArchivedApplications(restoreApplication(id))
-    setApplications(getApplications())
+  const handleRestoreApplication = async (id) => {
+    try {
+      const updated = await restoreApplication(id)
+      setAllApplications((list) => list.map((app) => (app.id === id ? updated : app)))
+    } catch (err) {
+      console.error(err)
+      setApplicationsError(err.message || 'Could not restore this application.')
+    }
   }
 
   // Permanent deletion is only ever available from within the Archive.
-  const handleDeleteForever = (id) => {
-    setArchivedApplications(deleteApplication(id))
+  const handleDeleteForever = async (id) => {
+    try {
+      await deleteApplication(id)
+      setAllApplications((list) => list.filter((app) => app.id !== id))
+    } catch (err) {
+      console.error(err)
+      setApplicationsError(err.message || 'Could not delete this application.')
+    }
   }
 
   return (
@@ -337,7 +412,9 @@ function App() {
       <PatientSidebar
         photo={photo}
         hospitalNumber={hospitalNumber}
-        onRegenerate={() => setHospitalNumber(generateNextHospitalNumber(existingHospitalNumbers()))}
+        onRegenerate={() =>
+          setHospitalNumber(generateNextHospitalNumber(existingHospitalNumbers(allApplications)))
+        }
         name={fullName}
         status={dispositionCategory}
         view={view}
@@ -410,6 +487,16 @@ function App() {
             <strong>{saveNotice.hospitalNumber}</strong> — disposition:{' '}
             <strong>{saveNotice.dispositionCategory.replace(/_/g, ' ').toUpperCase()}</strong>
           </div>
+        )}
+
+        {applicationsError && (
+          <div className="submit-banner submit-banner-editing">
+            {applicationsError}
+          </div>
+        )}
+
+        {applicationsLoading && (
+          <div className="submit-banner">Loading saved applications from Supabase…</div>
         )}
 
         <form onSubmit={handleSubmit}>
@@ -858,7 +945,7 @@ function App() {
             id="applications"
             eyebrow="07"
             title="Applications"
-            description="Every saved report is stored here in this browser's local storage."
+            description="Every saved report is stored in Supabase, so it's available from any browser or device."
           >
             <div className="applications-toolbar">
               <button
@@ -919,8 +1006,12 @@ function App() {
                   Cancel Edit
                 </button>
               )}
-              <button type="submit" className="btn btn-primary btn-lg">
-                {editingId ? 'Update Examination Report' : 'Save Examination Report'}
+              <button type="submit" className="btn btn-primary btn-lg" disabled={isSaving}>
+                {isSaving
+                  ? 'Saving…'
+                  : editingId
+                    ? 'Update Examination Report'
+                    : 'Save Examination Report'}
               </button>
             </div>
           </div>

@@ -1,111 +1,158 @@
-// Simple localStorage-backed store for saved Pre-Employment applications.
-// Every time an examination report is saved, a snapshot of the full form
-// is pushed into this store so it can be revisited or re-printed later.
+// Supabase-backed store for saved Pre-Employment applications.
+// This replaces the old localStorage-based version. Every time an
+// examination report is saved, a snapshot of the full form is pushed into
+// the `applications` table (see supabase-schema.sql) so it can be revisited
+// or re-printed later — and now shared across devices/browsers instead of
+// being stuck in one browser's localStorage.
 //
 // Applications are never wiped out by the "delete" action on the main
 // Applications list — instead they are archived (moved out of the active
 // list and flagged with `archived: true`) so they can still be recovered
 // or permanently removed later from the dedicated Archive view.
+//
+// Shape kept identical to the old localStorage version so the rest of the
+// app (App.jsx, ApplicationsPanel, ArchivePanel) keeps working with plain
+// camelCase objects like { id, hospitalNumber, fullName, personal, vitals,
+// ... }. The only difference is every function here now returns a Promise,
+// since talking to Supabase is a network call.
 
-const STORAGE_KEY = 'peme_applications'
+import { supabase } from './supabaseClient.js'
 
-function safeParse(json) {
-  try {
-    const parsed = JSON.parse(json)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
+const TABLE = 'applications'
+
+// Fields that live inside the `data` JSONB column (everything from
+// buildSnapshot() in App.jsx that isn't one of the dedicated columns).
+const DATA_FIELDS = [
+  'photo',
+  'personal',
+  'vitals',
+  'medicalHistory',
+  'femaleHistory',
+  'otherHistoryNotes',
+  'physicalExam',
+  'labResults',
+  'screeningResults',
+  'diagnosis',
+  'dispositionNote',
+  'otherDiseaseFindings',
+  'examiner',
+  'applicantSignature',
+  'examinerSignature',
+]
+
+// Converts a Supabase row (snake_case columns + `data` jsonb) back into the
+// flat camelCase shape the rest of the app expects.
+function rowToApp(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    hospitalNumber: row.hospital_number,
+    fullName: row.full_name,
+    dispositionCategory: row.disposition_category,
+    archived: row.archived,
+    savedAt: row.saved_at,
+    updatedAt: row.updated_at,
+    archivedAt: row.archived_at,
+    ...(row.data || {}),
   }
 }
 
-// Internal: full raw list, active + archived.
-function getAllApplications() {
-  if (typeof window === 'undefined') return []
-  const raw = window.localStorage.getItem(STORAGE_KEY)
-  if (!raw) return []
-  return safeParse(raw)
-}
-
-function persist(list) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
-}
-
-// Active (non-archived) applications only — this is what the main
-// "Applications" list on the form shows.
-export function getApplications() {
-  return getAllApplications().filter((app) => !app.archived)
-}
-
-// Archived applications only — this is what the dedicated Archive view
-// in the sidebar shows.
-export function getArchivedApplications() {
-  return getAllApplications().filter((app) => app.archived)
-}
-
-// Every application saved, active and archived — used for things like
-// making sure a newly generated hospital number never collides with one
-// already in use, even by an archived record.
-export function getAllApplicationsIncludingArchived() {
-  return getAllApplications()
-}
-
-// Adds a new application record to the front of the list and returns it
-// (including its generated id / savedAt timestamp).
-export function saveApplication(snapshot) {
-  const list = getAllApplications()
-  const record = {
-    id: `app_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    savedAt: new Date().toISOString(),
-    archived: false,
-    ...snapshot,
+// Converts an app snapshot (as built by buildSnapshot() in App.jsx) into a
+// Supabase row payload: known fields become real columns, everything else
+// goes into `data`.
+function appToRow(snapshot) {
+  const data = {}
+  DATA_FIELDS.forEach((key) => {
+    if (snapshot[key] !== undefined) data[key] = snapshot[key]
+  })
+  return {
+    hospital_number: snapshot.hospitalNumber,
+    full_name: snapshot.fullName ?? '',
+    disposition_category: snapshot.dispositionCategory ?? 'class_a',
+    data,
   }
-  const next = [record, ...list]
-  persist(next)
-  return record
 }
 
-// Moves an application out of the active Applications list and into the
-// Archive. Returns the updated active list.
-export function archiveApplication(id) {
-  const next = getAllApplications().map((app) =>
-    app.id === id ? { ...app, archived: true, archivedAt: new Date().toISOString() } : app
-  )
-  persist(next)
-  return next.filter((app) => !app.archived)
+function throwIfError(error, action) {
+  if (error) {
+    console.error(`[applicationsStore] ${action} failed:`, error)
+    throw new Error(error.message || `Failed to ${action}.`)
+  }
 }
 
-// Moves an application out of the Archive and back into the active
-// Applications list. Returns the updated archived list.
-export function restoreApplication(id) {
-  const next = getAllApplications().map((app) =>
-    app.id === id ? { ...app, archived: false, archivedAt: null } : app
-  )
-  persist(next)
-  return next.filter((app) => app.archived)
+// Fetches every application, active and archived, newest first. Callers
+// (App.jsx) keep this in state and derive the active/archived lists from
+// it with a filter, rather than re-fetching separately.
+export async function fetchAllApplications() {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .order('saved_at', { ascending: false })
+
+  throwIfError(error, 'load applications')
+  return (data || []).map(rowToApp)
 }
 
-// Permanently removes an application. Only ever called from the Archive
-// view — the active Applications list only ever archives, never deletes.
-// Returns the updated archived list.
-export function deleteApplication(id) {
-  const next = getAllApplications().filter((app) => app.id !== id)
-  persist(next)
-  return next.filter((app) => app.archived)
+// Inserts a new application record and returns it (including its generated
+// id / saved_at timestamp, mapped back to camelCase).
+export async function saveApplication(snapshot) {
+  const payload = appToRow(snapshot)
+  const { data, error } = await supabase
+    .from(TABLE)
+    .insert(payload)
+    .select()
+    .single()
+
+  throwIfError(error, 'save application')
+  return rowToApp(data)
 }
 
 // Overwrites an existing application record in place (used by the Edit
-// action on the Applications list) without changing its id, savedAt, or
-// archived status. Adds/updates an `updatedAt` timestamp. Returns the
-// updated active (non-archived) list, since editing only ever happens
-// from the active Applications list.
-export function updateApplication(id, snapshot) {
-  const next = getAllApplications().map((app) =>
-    app.id === id ? { ...app, ...snapshot, id: app.id, savedAt: app.savedAt, updatedAt: new Date().toISOString() } : app
-  )
-  persist(next)
-  return next.filter((app) => !app.archived)
+// action). Returns the updated record.
+export async function updateApplication(id, snapshot) {
+  const payload = appToRow(snapshot)
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single()
+
+  throwIfError(error, 'update application')
+  return rowToApp(data)
 }
 
-export function clearApplications() {
-  persist([])
+// Moves an application into the Archive. Returns the updated record.
+export async function archiveApplication(id) {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update({ archived: true, archived_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+
+  throwIfError(error, 'archive application')
+  return rowToApp(data)
+}
+
+// Moves an application out of the Archive and back into the active list.
+// Returns the updated record.
+export async function restoreApplication(id) {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update({ archived: false, archived_at: null })
+    .eq('id', id)
+    .select()
+    .single()
+
+  throwIfError(error, 'restore application')
+  return rowToApp(data)
+}
+
+// Permanently removes an application. Only ever called from the Archive
+// view. Returns the deleted id.
+export async function deleteApplication(id) {
+  const { error } = await supabase.from(TABLE).delete().eq('id', id)
+  throwIfError(error, 'delete application')
+  return id
 }
