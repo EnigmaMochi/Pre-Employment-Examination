@@ -1,0 +1,90 @@
+:root {
+  /* Sidebar (clinical portal teal) */
+  --sidebar-from: #0b4d52;
+  --sidebar-to: #073539;
+  --sidebar-active: #14a89a;
+  --sidebar-text: #d8ece9;
+  --sidebar-text-dim: #8fb8b3;
+
+  /* Content surface */
+  --bg: #eef2f3;
+  --card: #ffffff;
+  --card-border: #e2e8e7;
+  --divider: #edf1f1;
+
+  /* Text */
+  --text-h: #10302e;
+  --text: #45585a;
+  --text-muted: #7c8f8f;
+
+  /* Accents */
+  --accent: #0f766e;
+  --accent-dark: #0b5852;
+  --accent-soft: rgba(15, 118, 110, 0.09);
+  --navy: #1e3a5f;
+
+  /* Status */
+  --status-fit-bg: #e8f7ee;
+  --status-fit: #178a45;
+  --status-meds-bg: #fef6e7;
+  --status-meds: #b6740a;
+  --status-restrict-bg: #fdeee4;
+  --status-restrict: #c2560f;
+  --status-unfit-bg: #fbe9e9;
+  --status-unfit: #c22626;
+  --status-pending-bg: #eeecfb;
+  --status-pending: #5b4bc4;
+
+  --shadow-sm: 0 1px 2px rgba(16, 48, 46, 0.06);
+  --shadow-md: 0 8px 24px -8px rgba(16, 48, 46, 0.18);
+  --radius: 12px;
+
+  --sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --heading: 'Manrope', var(--sans);
+  --mono: 'Space Mono', ui-monospace, Consolas, monospace;
+
+  font: 15px/1.5 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--heading);
+  color: var(--text-h);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font-family: inherit;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}

@@ -1,0 +1,32 @@
+.auth-gate-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 8px 20px;
+  background: #16305c;
+  color: #dbe6f5;
+  font-size: 0.8rem;
+}
+
+.auth-gate-user strong {
+  color: #fff;
+}
+
+.auth-gate-logout {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  color: #fff;
+  font-size: 0.78rem;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.auth-gate-logout:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
