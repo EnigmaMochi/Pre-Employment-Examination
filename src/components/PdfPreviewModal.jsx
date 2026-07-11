@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { buildPdfFromData, pdfToBlobUrl } from '../utils/generatePdf.js'
+import { buildPdfFromData, pdfToBlobUrl, pdfToPageImage, isHandheldMobile } from '../utils/generatePdf.js'
 
 export default function PdfPreviewModal({ data, fileName, onClose }) {
   const pdfRef = useRef(null)
   const [status, setStatus] = useState('generating') // generating | ready | error
   const [blobUrl, setBlobUrl] = useState(null)
+  const [pageImage, setPageImage] = useState(null)
+  const mobile = isHandheldMobile()
 
   useEffect(() => {
     let cancelled = false
@@ -16,12 +18,21 @@ export default function PdfPreviewModal({ data, fileName, onClose }) {
         const pdf = await buildPdfFromData(data)
         if (cancelled) return
         pdfRef.current = pdf
-        localUrl = await pdfToBlobUrl(pdf)
-        if (cancelled) {
-          URL.revokeObjectURL(localUrl)
-          return
+
+        if (mobile) {
+          // Phones generally can't render a PDF inline inside an <iframe>
+          // (no built-in viewer), so rasterize page 1 to an image instead.
+          const img = await pdfToPageImage(pdf, 2)
+          if (cancelled) return
+          setPageImage(img)
+        } else {
+          localUrl = await pdfToBlobUrl(pdf)
+          if (cancelled) {
+            URL.revokeObjectURL(localUrl)
+            return
+          }
+          setBlobUrl(localUrl)
         }
-        setBlobUrl(localUrl)
         setStatus('ready')
       } catch (err) {
         console.error('PDF generation failed:', err)
@@ -34,7 +45,7 @@ export default function PdfPreviewModal({ data, fileName, onClose }) {
       cancelled = true
       if (localUrl) URL.revokeObjectURL(localUrl)
     }
-  }, [data])
+  }, [data, mobile])
 
   const handleDownload = () => {
     if (pdfRef.current) {
@@ -69,7 +80,16 @@ export default function PdfPreviewModal({ data, fileName, onClose }) {
               Couldn&rsquo;t generate the PDF preview. You can still try downloading again.
             </p>
           )}
-          {status === 'ready' && blobUrl && (
+          {status === 'ready' && mobile && pageImage && (
+            <div className="pdf-modal-scroll">
+              <img
+                src={pageImage.dataUrl}
+                alt="Application PDF preview"
+                className="pdf-modal-image"
+              />
+            </div>
+          )}
+          {status === 'ready' && !mobile && blobUrl && (
             <iframe title="Application PDF preview" src={blobUrl} className="pdf-modal-frame" />
           )}
         </div>
