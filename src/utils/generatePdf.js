@@ -535,3 +535,42 @@ export async function pdfToBlobUrl(pdf) {
   const blob = pdf.output('blob')
   return URL.createObjectURL(blob)
 }
+
+// Renders page 1 of the generated PDF to a PNG data URL using pdf.js.
+// Most mobile browsers (Chrome/Firefox/Samsung Internet on Android, and
+// many in-app browsers) have no built-in PDF renderer for <iframe src="...">,
+// so an iframe preview just falls back to a bare "open/download" chip there.
+// Rasterizing the page ourselves works identically on every platform.
+export async function pdfToPageImage(pdf, scale = 2) {
+  const pdfjsLib = await import('pdfjs-dist')
+  const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+
+  const bytes = pdf.output('arraybuffer')
+  const loadingTask = pdfjsLib.getDocument({ data: bytes })
+  const pdfDoc = await loadingTask.promise
+  const page = await pdfDoc.getPage(1)
+
+  const viewport = page.getViewport({ scale })
+  const canvas = document.createElement('canvas')
+  canvas.width = viewport.width
+  canvas.height = viewport.height
+  const ctx = canvas.getContext('2d')
+
+  await page.render({ canvasContext: ctx, viewport }).promise
+  const dataUrl = canvas.toDataURL('image/png')
+
+  pdfDoc.destroy()
+  return { dataUrl, width: viewport.width, height: viewport.height }
+}
+
+// Chrome/Firefox/Safari on Android and iOS phones generally lack a native
+// in-iframe PDF viewer (they show a download chip instead of the document).
+// Tablets running the same browsers usually do render inline fine, so this
+// checks for the "Mobi" token Chrome/Android specifically add for phones,
+// plus iPhone's UA, rather than screen size (which tablets can share with
+// small desktop windows).
+export function isHandheldMobile() {
+  if (typeof navigator === 'undefined') return false
+  return /iPhone|iPod|Android.*Mobile|Mobile.*Android/i.test(navigator.userAgent)
+}
