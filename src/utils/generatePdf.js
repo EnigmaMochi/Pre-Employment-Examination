@@ -541,9 +541,13 @@ export async function pdfToBlobUrl(pdf) {
 // many in-app browsers) have no built-in PDF renderer for <iframe src="...">,
 // so an iframe preview just falls back to a bare "open/download" chip there.
 // Rasterizing the page ourselves works identically on every platform.
+// Uses the "legacy" build, which pdf.js ships specifically for browsers/
+// webviews with less consistent ES module + worker support (in-app
+// browsers, older mobile Chromium builds, etc.) rather than the modern
+// build used elsewhere.
 export async function pdfToPageImage(pdf, scale = 2) {
-  const pdfjsLib = await import('pdfjs-dist')
-  const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const workerUrl = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
   const bytes = pdf.output('arraybuffer')

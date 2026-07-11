@@ -3,9 +3,11 @@ import { buildPdfFromData, pdfToBlobUrl, pdfToPageImage, isHandheldMobile } from
 
 export default function PdfPreviewModal({ data, fileName, onClose }) {
   const pdfRef = useRef(null)
-  const [status, setStatus] = useState('generating') // generating | ready | error
+  const [status, setStatus] = useState('generating') // generating | ready | preview_error | error
   const [blobUrl, setBlobUrl] = useState(null)
   const [pageImage, setPageImage] = useState(null)
+  const [errorDetail, setErrorDetail] = useState('')
+  const [canDownload, setCanDownload] = useState(false)
   const mobile = isHandheldMobile()
 
   useEffect(() => {
@@ -14,14 +16,28 @@ export default function PdfPreviewModal({ data, fileName, onClose }) {
 
     async function run() {
       setStatus('generating')
+      setCanDownload(false)
+
+      // Step 1: build the PDF itself. If this fails, nothing else can work.
+      let pdf
       try {
-        const pdf = await buildPdfFromData(data)
+        pdf = await buildPdfFromData(data)
         if (cancelled) return
         pdfRef.current = pdf
+        setCanDownload(true) // the PDF exists now — download should work even if preview rendering fails below
+      } catch (err) {
+        console.error('PDF build failed:', err)
+        if (!cancelled) {
+          setErrorDetail(err?.message || String(err))
+          setStatus('error')
+        }
+        return
+      }
 
+      // Step 2: build the on-screen preview. This can fail independently
+      // (e.g. mobile rasterization issues) without affecting the download.
+      try {
         if (mobile) {
-          // Phones generally can't render a PDF inline inside an <iframe>
-          // (no built-in viewer), so rasterize page 1 to an image instead.
           const img = await pdfToPageImage(pdf, 2)
           if (cancelled) return
           setPageImage(img)
@@ -35,8 +51,11 @@ export default function PdfPreviewModal({ data, fileName, onClose }) {
         }
         setStatus('ready')
       } catch (err) {
-        console.error('PDF generation failed:', err)
-        if (!cancelled) setStatus('error')
+        console.error('PDF preview rendering failed:', err)
+        if (!cancelled) {
+          setErrorDetail(err?.message || String(err))
+          setStatus('preview_error')
+        }
       }
     }
 
@@ -63,7 +82,7 @@ export default function PdfPreviewModal({ data, fileName, onClose }) {
               type="button"
               className="btn btn-ghost btn-sm"
               onClick={handleDownload}
-              disabled={status !== 'ready'}
+              disabled={!canDownload}
             >
               Download PDF
             </button>
@@ -77,7 +96,13 @@ export default function PdfPreviewModal({ data, fileName, onClose }) {
           {status === 'generating' && <p className="pdf-modal-status">Generating PDF preview…</p>}
           {status === 'error' && (
             <p className="pdf-modal-status pdf-modal-error">
-              Couldn&rsquo;t generate the PDF preview. You can still try downloading again.
+              Couldn&rsquo;t generate the PDF. {errorDetail ? `(${errorDetail})` : ''}
+            </p>
+          )}
+          {status === 'preview_error' && (
+            <p className="pdf-modal-status pdf-modal-error">
+              Built the PDF, but couldn&rsquo;t render the on-screen preview. You can still download it below.
+              {errorDetail ? ` (${errorDetail})` : ''}
             </p>
           )}
           {status === 'ready' && mobile && pageImage && (
